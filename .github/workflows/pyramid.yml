@@ -1,0 +1,71 @@
+# Renders the raster zoom pyramid for the live viewer (scripts/pyramid.mjs) and
+# attaches one pyramid-<track>.tar per track to the "pyramid" release. The live
+# server (race-control-stats live/maps.py) copies those into Cloudflare R2, so
+# no R2 keys are needed here.
+name: pyramid
+on:
+  workflow_dispatch:
+    inputs:
+      tracks:
+        description: "Tracks to render, comma separated (empty = all)"
+        type: string
+        default: ""
+permissions:
+  contents: write
+concurrency:
+  group: pyramid
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      tracks: ${{ steps.t.outputs.tracks }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: index.json
+          sparse-checkout-cone-mode: false
+      - id: t
+        env:
+          WANT: ${{ inputs.tracks }}
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os
+          idx = json.load(open("index.json"))
+          want = [t.strip() for t in os.environ["WANT"].split(",") if t.strip()] or sorted(idx)
+          bad = [t for t in want if t not in idx]
+          assert not bad, f"unknown tracks: {bad}"
+          print("tracks=" + json.dumps(want))
+          PY
+      - name: Make sure the release exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release view pyramid -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 || gh release create pyramid -R "$GITHUB_REPOSITORY" --title "Raster map pyramid" --notes "One pyramid-<track>.tar per track, made by the pyramid workflow. The live server copies them to R2."
+  render:
+    needs: plan
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        track: ${{ fromJson(needs.plan.outputs.tracks) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            index.json
+            scripts
+            README.md
+            ${{ matrix.track }}
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-save playwright@1.48.2 && npx playwright install --with-deps chromium
+      - run: node scripts/pyramid.mjs "${{ matrix.track }}" --out pyramid
+      - name: Upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tar -C pyramid -cf "pyramid-${{ matrix.track }}.tar" "${{ matrix.track }}"
+          ls -la "pyramid-${{ matrix.track }}.tar"
+          gh release upload pyramid "pyramid-${{ matrix.track }}.tar" --clobber -R "$GITHUB_REPOSITORY"

@@ -12,5 +12,8 @@ served at https://gremigaming.github.io/race-stats-maps/.
 The maps are our own renders of simplified outlines, made on the racing PC from
 the F1 25 track data. No game files or textures are stored here.
 
-The live viewer uses a raster zoom pyramid rendered from these SVGs; that lives
-in Cloudflare R2, not in this repo.
+The live viewer uses a raster zoom pyramid rendered from these SVGs by
+`scripts/pyramid.mjs` (1024 px WebP tiles, z 0 = 400 m down to z 4 = 25 m per tile).
+Run the `pyramid` workflow by hand after the SVGs change; it attaches one
+`pyramid-<track>.tar` per track to the `pyramid` release, and the live server copies
+them into Cloudflare R2. The pyramid is not stored in this repo.
