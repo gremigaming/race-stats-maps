@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-800 -900 100 100" width="1200" height="1200" shape-rendering="geometricPrecision"><defs><filter id="grainFine" filterUnits="userSpaceOnUse" x="-806" y="-906" width="112" height="112">
+<feTurbulence type="fractalNoise" baseFrequency="2.2" numOctaves="2" seed="4" result="n"/>
+<feColorMatrix in="n" type="matrix" values="0 0 0 0.16 0.84  0 0 0 0.16 0.84  0 0 0 0.16 0.84  0 0 0 0 1" result="g"/>
+<feComposite in="g" in2="SourceGraphic" operator="in" result="gi"/>
+<feBlend in="SourceGraphic" in2="gi" mode="multiply"/></filter></defs><g filter="url(#grainFine)"><path d="M-809.15 -898.95 L-811.85 -906 L-813.15 -909.35 L-813.95 -911.45 L-814.6 -913 L-815 -914.05 L-815.3 -914.85 L-815.5 -915.35 L-815.6 -915.6 L-810.6 -909.35 L-808.2 -906.35 L-806.7 -904.5 L-805.6 -903.1 L-804.85 -902.2 L-804.3 -901.5 L-803.95 -901.05 L-803.75 -900.8 L-806.05 -900.05 L-807.15 -899.65 L-807.8 -899.4 L-808.3 -899.25 L-808.65 -899.1 L-808.9 -899.05 L-809.1 -899Z" fill="#55524f" fill-rule="evenodd"/></g></svg>
