@@ -9,6 +9,9 @@ served at https://gremigaming.github.io/race-stats-maps/.
   and z `j*tile..(j+1)*tile`, x right and z down.
 - `<track>/<i>_<j>.<layer>.svg`: one SVG per tile and layer, in world metres.
 
+`scripts/fix_shore.py` removes the fake shore glow where water carries on across tile
+edges; run it again after copying new SVGs from the racing PC.
+
 The maps are our own renders of simplified outlines, made on the racing PC from
 the F1 25 track data. No game files or textures are stored here.
 
