@@ -1,0 +1,37 @@
+name: pages
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: true
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check index.json against the files
+        run: |
+          python3 - <<'PY'
+          import json, os
+          idx = json.load(open("index.json"))
+          missing = [f"{t}/{n}" for t, m in idx.items() for tile in m["tiles"] for n in tile["files"].values() if not os.path.exists(f"{t}/{n}")]
+          print(len(idx), "tracks,", sum(len(m["tiles"]) for m in idx.values()), "tiles,", len(missing), "missing files")
+          assert not missing, missing[:20]
+          PY
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+      - id: deployment
+        uses: actions/deploy-pages@v4
