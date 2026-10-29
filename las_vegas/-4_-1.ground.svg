@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-400 -100 100 100" width="1200" height="1200" shape-rendering="geometricPrecision"><defs><filter id="grainGrass" filterUnits="userSpaceOnUse" x="-406" y="-106" width="112" height="112">
+<feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="3" seed="9" result="n"/>
+<feColorMatrix in="n" type="matrix" values="0 0 0 0.3 0.78  0 0 0 0.34 0.76  0 0 0 0.22 0.82  0 0 0 0 1" result="g"/>
+<feComposite in="g" in2="SourceGraphic" operator="in" result="gi"/>
+<feBlend in="SourceGraphic" in2="gi" mode="multiply"/></filter><filter id="water" filterUnits="userSpaceOnUse" x="-406" y="-106" width="112" height="112">
+<feTurbulence type="fractalNoise" baseFrequency="0.09 0.32" numOctaves="3" seed="2" result="n"/>
+<feDiffuseLighting in="n" surfaceScale="1.4" diffuseConstant="1" lighting-color="#ffffff" result="lit"><feDistantLight azimuth="200" elevation="38"/></feDiffuseLighting>
+<feColorMatrix in="lit" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0.33 0.33 0.33 0 -0.5" result="hl"/>
+<feComposite in="hl" in2="SourceGraphic" operator="in" result="hli"/>
+<feTurbulence type="fractalNoise" baseFrequency="0.012" numOctaves="2" seed="7" result="big"/>
+<feColorMatrix in="big" type="matrix" values="0 0 0 0.28 0.78  0 0 0 0.28 0.78  0 0 0 0.24 0.8  0 0 0 0 1" result="bg"/>
+<feComposite in="bg" in2="SourceGraphic" operator="in" result="bgi"/>
+<feBlend in="SourceGraphic" in2="bgi" mode="multiply" result="b1"/>
+<feComposite in="hli" in2="b1" operator="over"/></filter><filter id="grainFine" filterUnits="userSpaceOnUse" x="-406" y="-106" width="112" height="112">
+<feTurbulence type="fractalNoise" baseFrequency="2.2" numOctaves="2" seed="4" result="n"/>
+<feColorMatrix in="n" type="matrix" values="0 0 0 0.16 0.84  0 0 0 0.16 0.84  0 0 0 0.16 0.84  0 0 0 0 1" result="g"/>
+<feComposite in="g" in2="SourceGraphic" operator="in" result="gi"/>
+<feBlend in="SourceGraphic" in2="gi" mode="multiply"/></filter></defs><rect x="-406" y="-106" width="112" height="112" fill="#5c6146"/><g filter="url(#water)"></g><g filter="url(#grainGrass)"></g><g filter="url(#grainFine)"><path d="M-326 -112 L-314 -112 L-304.85 -111.9 L-298.5 -111.7 L-295 -111.45 L-294.3 -111.05 L-293.75 -109.95 L-293.4 -108.15 L-293.25 -105.55 L-293.25 -102.25 L-292.9 -99.7 L-292.25 -97.9 L-291.3 -96.8 L-289.95 -96.5 L-289 -95.75 L-288.35 -94.6 L-288 -93 L-288 -91 L-288.5 -89.5 L-289.5 -88.5 L-291 -88 L-293 -88 L-294.5 -87.5 L-295.5 -86.5 L-296 -85 L-296 -83 L-299.5 -81.5 L-306.5 -80.5 L-317 -80 L-331 -80 L-341.5 -80.5 L-348.5 -81.5 L-352 -83 L-352 -85 L-355.5 -86.5 L-362.5 -87.5 L-373 -88 L-387 -88 L-397.5 -89.15 L-404.5 -91.45 L-408 -94.9 L-408 -99.5 L-404.45 -103 L-397.35 -105.3 L-386.65 -106.45 L-372.45 -106.45 L-361.35 -106.8 L-353.35 -107.5 L-348.45 -108.5 L-346.7 -109.9 L-342.35 -110.95 L-335.45 -111.65Z M-408 -23 L-408 -33 L-407 -40.5 L-405 -45.5 L-402 -48 L-398 -48 L-395 -49.5 L-393 -52.5 L-392 -57 L-392 -63 L-390 -67.5 L-386 -70.5 L-380 -72 L-372 -72 L-366 -71.5 L-362 -70.5 L-360 -69 L-360 -67 L-355.5 -65.5 L-346.5 -64.5 L-333 -64 L-315 -64 L-301.5 -59.5 L-292.5 -50.5 L-288 -37 L-288 -19 L-295.5 -5.5 L-310.5 3.5 L-333 8 L-363 8 L-385.5 7 L-400.5 5 L-408 2 L-408 -2 L-408 -7.5 L-408 -14.5Z" fill="#6c6352" fill-rule="evenodd"/></g></svg>
