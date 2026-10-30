@@ -2,7 +2,7 @@
 //
 //   node scripts/pyramid.mjs <track> [<track> ...] [--out pyramid] [--only i_j,i_j]
 //
-// Chromium draws every 100 m SVG tile (all layers, in index.json order) at
+// Chromium draws every 100 m SVG tile (all layers but "over", in index.json order; the viewer draws "over" above the cars) at
 // 4096 px, so the pyramid looks exactly like the SVGs in a browser. Output, all
 // 1024 px WebP squares, world x right and z down:
 //
@@ -102,7 +102,7 @@ for (const track of tracks) {
   const z2 = new Map();
   const t0 = Date.now();
   for (const [n, t] of tiles.entries()) {
-    const srcs = meta.layers.filter((l) => t.files[l]).map((l) => `${base}/${track}/${t.files[l]}`);
+    const srcs = meta.layers.filter((l) => t.files[l] && l !== "over").map((l) => `${base}/${track}/${t.files[l]}`);
     const res = await page.evaluate((s) => window.renderTile(s), srcs);
     for (const [key, url] of Object.entries(res)) {
       const [z, ab] = key.split("/");
