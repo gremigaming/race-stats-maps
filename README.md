@@ -8,6 +8,12 @@ served at https://gremigaming.github.io/race-stats-maps/.
   (`i`, `j`, `files` per layer). Tile `i_j` covers world x `i*tile..(i+1)*tile`
   and z `j*tile..(j+1)*tile`, x right and z down.
 - `<track>/<i>_<j>.<layer>.svg`: one SVG per tile and layer, in world metres.
+- `over` (Suzuka so far, listed after `objects`): everything above a road, to draw above the
+  cars that pass under it. One `<g>` per structure with `data-kind` (`bridge`, `tunnel`,
+  `gantry`, `tree`, `roof`) and `data-under` (game y in metres of its underside; a car
+  below that height is under it). A bridge is drawn with the road it carries and is left
+  out of `objects`. `<track>/over.json` lists the structures:
+  `{id, kind, under, bbox: [x0, z0, x1, z1], length_m}` (metres of road beneath).
 
 `scripts/fix_shore.py` removes the fake shore glow where water carries on across tile
 edges; run it again after copying new SVGs from the racing PC.

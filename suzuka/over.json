@@ -1,0 +1,350 @@
+[
+{
+"id": "suz_dressing_bridge_a@-102,89",
+"kind": "bridge",
+"under": -5.3,
+"bbox": [
+-127.1,
+51.2,
+-77.8,
+126.3
+],
+"length_m": 21.2
+},
+{
+"id": "cam_catcam_post_a@610,-52",
+"kind": "gantry",
+"under": -11.5,
+"bbox": [
+607.6,
+-54.8,
+611.8,
+-50.1
+],
+"length_m": 0.0
+},
+{
+"id": "suz_dressing_gantry_a@836,194",
+"kind": "gantry",
+"under": -20.9,
+"bbox": [
+825.9,
+185.1,
+847.0,
+203.3
+],
+"length_m": 0
+},
+{
+"id": "suz_dressing_gantry_b@653,-20",
+"kind": "gantry",
+"under": -12.8,
+"bbox": [
+642.8,
+-29.5,
+664.0,
+-11.3
+],
+"length_m": 0.8
+},
+{
+"id": "suz_dressing_gantry_c@228,-111",
+"kind": "gantry",
+"under": 5.6,
+"bbox": [
+218.2,
+-121.9,
+237.4,
+-99.8
+],
+"length_m": 0.0
+},
+{
+"id": "suz_dressing_gantry_d@-475,-85",
+"kind": "gantry",
+"under": 4.6,
+"bbox": [
+-480.5,
+-99.4,
+-470.1,
+-70.9
+],
+"length_m": 0.0
+},
+{
+"id": "suz_dressing_gantry_e@-490,-52",
+"kind": "gantry",
+"under": -0.2,
+"bbox": [
+-495.0,
+-62.5,
+-485.1,
+-40.7
+],
+"length_m": 0.0
+},
+{
+"id": "suz_dressing_gantry_f@-597,-89",
+"kind": "gantry",
+"under": -2.8,
+"bbox": [
+-603.0,
+-100.5,
+-591.3,
+-78.5
+],
+"length_m": 0.0
+},
+{
+"id": "suz_gantry_sponsor_a@573,-87",
+"kind": "gantry",
+"under": -8.1,
+"bbox": [
+568.5,
+-90.5,
+576.6,
+-82.9
+],
+"length_m": 0.0
+},
+{
+"id": "garage_main_a@631,12",
+"kind": "roof",
+"under": -13.4,
+"bbox": [
+622.4,
+3.7,
+639.7,
+21.2
+],
+"length_m": 13.4
+},
+{
+"id": "garage_main_a@644,27",
+"kind": "roof",
+"under": -13.8,
+"bbox": [
+635.0,
+18.5,
+652.3,
+36.0
+],
+"length_m": 13.0
+},
+{
+"id": "garage_main_a@660,47",
+"kind": "roof",
+"under": -14.6,
+"bbox": [
+651.2,
+38.3,
+668.5,
+55.7
+],
+"length_m": 12.8
+},
+{
+"id": "garage_main_a@672,62",
+"kind": "roof",
+"under": -15.0,
+"bbox": [
+663.7,
+53.0,
+681.0,
+70.5
+],
+"length_m": 13.0
+},
+{
+"id": "garage_main_a@689,81",
+"kind": "roof",
+"under": -15.9,
+"bbox": [
+680.4,
+72.5,
+697.7,
+90.0
+],
+"length_m": 13.2
+},
+{
+"id": "garage_main_a@702,96",
+"kind": "roof",
+"under": -16.3,
+"bbox": [
+692.9,
+87.1,
+710.3,
+104.6
+],
+"length_m": 13.3
+},
+{
+"id": "garage_main_a@718,115",
+"kind": "roof",
+"under": -17.2,
+"bbox": [
+709.7,
+106.6,
+727.0,
+124.1
+],
+"length_m": 13.1
+},
+{
+"id": "garage_main_a@731,130",
+"kind": "roof",
+"under": -17.6,
+"bbox": [
+722.2,
+121.3,
+739.6,
+138.8
+],
+"length_m": 12.1
+},
+{
+"id": "garage_main_a@748,150",
+"kind": "roof",
+"under": -18.4,
+"bbox": [
+738.8,
+140.9,
+756.2,
+158.4
+],
+"length_m": 12.9
+},
+{
+"id": "garage_main_a@760,164",
+"kind": "roof",
+"under": -18.8,
+"bbox": [
+751.5,
+155.5,
+768.8,
+173.0
+],
+"length_m": 12.1
+},
+{
+"id": "garage_main_a@773,179",
+"kind": "roof",
+"under": -19.6,
+"bbox": [
+764.4,
+170.6,
+781.7,
+188.1
+],
+"length_m": 12.8
+},
+{
+"id": "garage_main_a@786,194",
+"kind": "roof",
+"under": -20.1,
+"bbox": [
+776.9,
+185.3,
+794.3,
+202.8
+],
+"length_m": 12.8
+},
+{
+"id": "suz_building_white_a_08@-526,-46",
+"kind": "roof",
+"under": -2.2,
+"bbox": [
+-559.7,
+-58.9,
+-492.5,
+-32.7
+],
+"length_m": 66.3
+},
+{
+"id": "suz_digital_tower_a_01@856,236",
+"kind": "roof",
+"under": -22.2,
+"bbox": [
+854.0,
+233.5,
+858.8,
+238.1
+],
+"length_m": 1.9
+},
+{
+"id": "suz_multi_pitlane_a@615,1",
+"kind": "roof",
+"under": -13.7,
+"bbox": [
+577.4,
+-41.0,
+653.0,
+42.3
+],
+"length_m": 86.9
+},
+{
+"id": "suz_multi_pitlane_a@670,68",
+"kind": "roof",
+"under": -16.3,
+"bbox": [
+630.2,
+24.8,
+710.8,
+111.9
+],
+"length_m": 87.5
+},
+{
+"id": "suz_multi_pitlane_a@728,136",
+"kind": "roof",
+"under": -18.6,
+"bbox": [
+687.9,
+92.3,
+768.5,
+179.4
+],
+"length_m": 88.0
+},
+{
+"id": "suz_multi_pitlane_a@785,200",
+"kind": "roof",
+"under": -21.2,
+"bbox": [
+745.5,
+159.8,
+824.3,
+240.9
+],
+"length_m": 86.3
+},
+{
+"id": "suz_multi_walls@-811,-253",
+"kind": "roof",
+"under": 28.9,
+"bbox": [
+-915.1,
+-413.2,
+-706.6,
+-92.1
+],
+"length_m": 0
+},
+{
+"id": "tree@561.2,-78.7",
+"kind": "tree",
+"under": -11.9,
+"bbox": [
+560.1,
+-79.8,
+562.3,
+-77.6
+],
+"length_m": 0.0
+}
+]
