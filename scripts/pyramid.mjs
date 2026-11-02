@@ -5,9 +5,9 @@
 // Chromium draws every 100 m SVG tile (all layers but "over", in index.json order; the viewer draws "over" above the cars) at
 // 4096 px, so the pyramid looks exactly like the SVGs in a browser, except for the ground:
 //
-// Flat look (GreMi, 2 Nov): the ground layer is drawn without its grain/water texture filters
-// and every ground colour is snapped to one flat, sunny colour per surface (grass, gravel, dirt,
-// paved run-off, concrete, water, background); see flatGround(). Track, kerbs, marks, walls
+// Ground look (GreMi, 2 Nov): every ground colour is snapped to one muted, natural colour per
+// surface (grass, gravel, dirt, paved run-off, concrete, water, background) with one fine,
+// subtle grain instead of the old texture filters; see flatGround(). Track, kerbs, marks, walls
 // and objects (trees with their shading) are drawn exactly as in the SVGs. Tiles get the flat
 // background colour underneath, so no photo map shows through. Output, all 1024 px WebP
 // squares, world x right and z down:
@@ -28,16 +28,26 @@ const { chromium } = createRequire(import.meta.url)("playwright");
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PX = 1024, FULL = 4096, SRC = 100, LEVELS = 5, QUALITY = 0.82;
 
-// flat ground palette: bright, dry, daytime
+// ground palette: muted, natural, dry daytime. The viewer's look filter adds about 30 % saturation
+// on top, so these sit a little greyer than the colours seen on screen.
 const FLAT = {
-  background: "#b5c27f",
-  grass: "#7cb342",
-  gravel: "#dcc998",
-  dirt: "#c49a6c",
-  paved: "#8b8e91",
-  concrete: "#c4c6c8",
-  water: "#5ba8d8",
+  background: "#a3a882",
+  grass: "#7c9a5c",
+  gravel: "#cbbd9c",
+  dirt: "#a48c6c",
+  paved: "#7f8285",
+  concrete: "#aeb0b1",
+  water: "#58879f",
 };
+// fine grain (about 0.7 m) plus a faint broad variation, a few % of brightness either way; the
+// noise runs in world metres, so it continues across tile edges
+const GRAIN = `<filter id="flatGrain" x="-2%" y="-2%" width="104%" height="104%" color-interpolation-filters="sRGB">
+<feTurbulence type="fractalNoise" baseFrequency="1.4" numOctaves="2" seed="5" result="f"/>
+<feTurbulence type="fractalNoise" baseFrequency="0.06" numOctaves="2" seed="11" result="b"/>
+<feComposite in="f" in2="b" operator="arithmetic" k2="0.7" k3="0.5" k4="-0.1" result="n"/>
+<feColorMatrix in="n" type="matrix" values="1 0 0 0 0  1 0 0 0 0  1 0 0 0 0  0 0 0 0 1" result="g"/>
+<feComposite in="SourceGraphic" in2="g" operator="arithmetic" k2="1" k3="0.09" k4="-0.045" result="t"/>
+<feComposite in="t" in2="SourceGraphic" operator="in"/></filter>`;
 const BG = FLAT.background;
 
 /** One flat colour for a ground texture colour (the SVG colours are game texture averages). */
@@ -51,11 +61,12 @@ function surface(hex) {
   return max > 115 ? FLAT.gravel : FLAT.dirt;
 }
 
-/** The ground SVG without texture filters, in flat colours (the tile's base rect is the background or water). */
+/** The ground SVG in muted flat colours with one fine grain (the old grass/gravel/water filters go). */
 function flatGround(svg) {
   return svg
-    .replace(/ filter="url\(#[^)]*\)"/g, "")
-    .replace(/<rect([^>]*?) fill="(#[0-9a-fA-F]{6})"/g, (_, a, c) => `<rect${a} fill="${surface(c) === FLAT.water ? FLAT.water : FLAT.background}"`)
+    .replace("</defs>", `${GRAIN}</defs>`)
+    .replace(/ filter="url\(#(?!flatGrain)[^)]*\)"/g, ' filter="url(#flatGrain)"')
+    .replace(/<rect([^>]*?) fill="(#[0-9a-fA-F]{6})"/g, (_, a, c) => `<rect${a} fill="${surface(c) === FLAT.water ? FLAT.water : FLAT.background}" filter="url(#flatGrain)"`)
     .replace(/(<path[^>]*?) fill="(#[0-9a-fA-F]{6})"/g, (_, a, c) => `${a} fill="${surface(c)}"`);
 }
 
