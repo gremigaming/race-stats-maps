@@ -47,3 +47,8 @@ float3 positions, half4 normals/tangents/UVs) and submeshes with material slots;
 binding maps slots to `.material` files, which name the textures. The `.erp` holds the small mip
 levels of each texture (`GfxSurfaceRes`, with format and size in its header); the matching
 `.mipmaps` files hold the big ones and are used when dropped alongside.
+
+Submesh records in `GfxMeshRes` are 88 bytes from offset 0x40: index start at +0x18, index count
+at +0x1c, **base vertex at +0x20** (added to every 16-bit index; meshes with more than 65,535
+vertices, such as the big Monaco buildings, turn into long spikes without it) and material slot
+x3 at +0x3c. The `.emb` lists all slot names first, then the material paths in the same order.

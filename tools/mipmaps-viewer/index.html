@@ -622,7 +622,7 @@ var ERP = (function () {
     for (var s = 0; s < h[0]; s++) {
       var r = 0x40 + s * 88, ne = u32(d, r + 12), vbs = [];
       for (var k = 0; k < ne; k++) vbs.push(u32(d, r + 0x44 + k * 4));
-      subs.push({ ne: ne, start: u32(d, r + 0x18), count: u32(d, r + 0x1c), prim: u32(d, r + 0x14), vbs: vbs });
+      subs.push({ ne: ne, start: u32(d, r + 0x18), count: u32(d, r + 0x1c), base: u32(d, r + 0x20), mat: u32(d, r + 0x3c), prim: u32(d, r + 0x14), vbs: vbs });
     }
     var st = strings(d), bufNames = st.filter(function (x) { return /^eaid:\/\/.*[?&](vb|ib)=\d+$/.test(x); }), slots = st.filter(function (x) { return !/^eaid:/.test(x); });
     // element groups: a new declaration starts at slot 0 position
@@ -636,6 +636,9 @@ var ERP = (function () {
       sm.els = g;
     });
     var vbNames = bufNames.filter(function (x) { return /[?&]vb=/.test(x); }), ibName = bufNames.find(function (x) { return /[?&]ib=/.test(x); });
+    // material slot names are the last h[3] plain strings; submesh +0x3c is 3 x slot index
+    slots = slots.slice(Math.max(0, slots.length - h[3]));
+    subs.forEach(function (sm, si) { var k = sm.mat / 3; sm.slot = slots[(k % 1 === 0 && k < slots.length) ? k : Math.min(si, slots.length - 1)] || ''; });
     return { subs: subs, vbNames: vbNames, ibName: ibName, slots: slots };
   }
   // GfxBufferRes header: [type, stride, count, fmt]
@@ -673,16 +676,20 @@ var ERP = (function () {
           var bi = bufInfo(b.hdr), dv = new DataView(b.data.buffer, b.data.byteOffset, b.data.byteLength);
           var target = el.sem === 1 ? 'pos' : el.sem === 2 ? 'nrm' : el.sem === 3 ? 'tan' : (el.sem === 5 && el.idx === 0) ? 'uv' : null;
           if (!target) return;
+          var sz = { 47: 12, 51: 16, 35: 8, 29: 4, 14: 4 }[el.fmt] || 0;
+          if (!sz || el.off + sz > bi.stride || bi.stride * n > b.data.length) return;
+          if (target === 'pos') V.hasP = true;
           var nc = target === 'tan' ? 4 : target === 'uv' ? 2 : 3, arr = V[target];
           for (var i = 0; i < n; i++) { readEl(dv, i * bi.stride + el.off, el.fmt, arr, i * nc, nc); }
           if (target === 'nrm') V.hasN = true; if (target === 'tan') V.hasT = true; if (target === 'uv') V.hasUV = true;
         });
         cache[key] = V;
       }
-      var idx = new Uint32Array(sm.count), max = 0;
-      for (var q = 0; q < sm.count; q++) { var v = ii.stride === 4 ? idv.getUint32((sm.start + q) * 4, true) : idv.getUint16((sm.start + q) * 2, true); idx[q] = v; if (v > max) max = v; }
+      if (!V.hasP) return;
+      var idx = new Uint32Array(sm.count), max = 0, base = sm.base || 0;
+      for (var q = 0; q < sm.count; q++) { var v = ii.stride === 4 ? idv.getUint32((sm.start + q) * 4, true) : idv.getUint16((sm.start + q) * 2, true); v += base; idx[q] = v; if (v > max) max = v; }
       if (max >= V.n) return;
-      parts.push({ V: V, key: key, idx: idx, slot: m.slots[Math.min(si, m.slots.length - 1)] || '' });
+      parts.push({ V: V, key: key, idx: idx, slot: sm.slot });
     });
     return parts;
   }
@@ -1375,8 +1382,11 @@ function materialsFor(base) {
   if (!emb) return Promise.resolve({});
   return fragU(emb, 0).then(function (b) {
     var s = ERP.strings(b), map = {}, jobs = [];
-    for (var i = 0; i < s.length - 1; i++) {
-      if (!/^eaid:/.test(s[i]) && /\.material$/.test(s[i + 1])) {
+    // slot names and material paths come in the same order (all names first, or name/material pairs)
+    var mats = s.filter(function (x) { return /^eaid:.*\.material$/.test(x); }), names = s.filter(function (x) { return !/^eaid:/.test(x); });
+    names = names.slice(Math.max(0, names.length - mats.length));
+    mats.forEach(function (mpath, j) {
+      if (names[j] === undefined) return;
         (function (slot, mat) {
           var info = { slot: slot, name: shortName(mat).replace(/\.material$/, ''), tex: {}, alpha: false, found: false };
           map[slot] = info;
@@ -1391,10 +1401,8 @@ function materialsFor(base) {
             });
             info.alpha = /alpha|cutout|clip|foliage|fence/i.test(shader) || /_da\.(tif|tga)$/i.test(info.tex.color || '');
           }));
-        })(s[i], s[i + 1]);
-        i++;
-      }
-    }
+        })(names[j], mpath);
+    });
     return Promise.all(jobs).then(function () { return map; });
   });
 }
