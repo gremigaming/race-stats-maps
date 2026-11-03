@@ -26,3 +26,15 @@ The live viewer uses a raster zoom pyramid rendered from these SVGs by
 Run the `pyramid` workflow by hand after the SVGs change; it attaches one
 `pyramid-<track>.tar` per track to the `pyramid` release, and the live server copies
 them into Cloudflare R2. The pyramid is not stored in this repo.
+
+## Mipmaps viewer
+
+`tools/mipmaps-viewer/index.html` ([open](https://gremigaming.github.io/race-stats-maps/tools/mipmaps-viewer/))
+is a drop-in viewer for the game's `.mipmaps` texture files (e.g.
+`F1 25\environment_package\tracks\<track>\objects\textures`). Files never leave the browser.
+Each file holds the larger mip levels of one texture, largest first: either one raw LZ4 block
+per level, or the plain uncompressed chain. Pixels are BC1/BC3/BC4/BC5/BC7 blocks. Width,
+height and format are not in the file (they live in the `.erp`), so the viewer picks them by
+decoding the smallest level for each candidate and keeping the least blocky one; they can be
+changed by hand. Maps with the same base name (`_d`, `_da`, `_dh`, `_n`, `_s`) are combined
+into one material on a cube, sphere, plane or cylinder (`_dh` alpha raises the surface).
