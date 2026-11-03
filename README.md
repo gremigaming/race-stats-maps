@@ -38,3 +38,12 @@ height and format are not in the file (they live in the `.erp`), so the viewer p
 decoding the smallest level for each candidate and keeping the least blocky one; they can be
 changed by hand. Maps with the same base name (`_d`, `_da`, `_dh`, `_n`, `_s`) are combined
 into one material on a cube, sphere, plane or cylinder (`_dh` alpha raises the surface).
+
+It also opens the game's `.erp` archives (e.g.
+`F1 25\2025_asset_groups\environment_package\tracks\<track>\wep\<track>_common.erp`) and shows
+the 3D models in them. An `.erp` (`ERPK` v3) is a resource table plus zstd-packed fragments; the
+page carries its own zstd decoder. `GfxMeshRes` lists the vertex/index streams (`GfxBufferRes`,
+float3 positions, half4 normals/tangents/UVs) and submeshes with material slots; the `.emb`
+binding maps slots to `.material` files, which name the textures. The `.erp` holds the small mip
+levels of each texture (`GfxSurfaceRes`, with format and size in its header); the matching
+`.mipmaps` files hold the big ones and are used when dropped alongside.

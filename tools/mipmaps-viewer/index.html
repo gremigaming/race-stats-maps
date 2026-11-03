@@ -70,6 +70,11 @@ h2:first-child{margin-top:0}
 .map .t{font-size:12px;word-break:break-all;margin-bottom:4px}
 .map .meta{font-size:12px;color:var(--muted)}
 .kv{font-size:12px;color:var(--muted);margin:4px 0}
+.sec{font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);padding:10px 12px 6px;font-weight:600;background:var(--panel);position:sticky;top:0;z-index:1;border-bottom:1px solid var(--line)}
+.filter{display:block;width:calc(100% - 24px);margin:8px 12px;font:inherit;color:var(--text);background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:6px 8px}
+.ico{width:44px;height:44px;border-radius:4px;flex:none;background:var(--chip);display:flex;align-items:center;justify-content:center;color:var(--muted)}
+.tex{font-size:12px;margin:2px 0;word-break:break-all}
+.tex span{color:var(--muted)}
 .kv b{color:var(--text);font-weight:500}
 input[type=range]{flex:1}
 .note{font-size:12px;color:var(--muted);margin-top:14px;border-top:1px solid var(--line);padding-top:10px}
@@ -85,16 +90,16 @@ input[type=range]{flex:1}
 <body>
 <header>
   <h1>Mipmaps <span>Viewer</span></h1>
-  <div class="hint">Drop F1 25 <code>.mipmaps</code> files or a whole <code>textures</code> folder. Everything stays on your computer.</div>
+  <div class="hint">Drop F1 25 <code>.erp</code> archives (3D models) and <code>.mipmaps</code> files (textures). Everything stays on your computer.</div>
   <button class="primary" id="open">Open files</button>
-  <input type="file" id="file" multiple hidden accept=".mipmaps">
+  <input type="file" id="file" multiple hidden accept=".mipmaps,.erp">
 </header>
 <main>
   <aside id="list"></aside>
   <section id="view">
     <canvas id="gl"></canvas>
     <div id="flat"><canvas id="img"></canvas></div>
-    <div id="drop"><div class="box"><b>Drop .mipmaps files here</b><div>Files with the same name (<code>_d</code>, <code>_n</code>, <code>_s</code>…) are combined into one material.<br>You'll find them in <code>F1 25\environment_package\tracks\&lt;track&gt;\objects\textures</code>.</div></div></div>
+    <div id="drop"><div class="box"><b>Drop .erp or .mipmaps files here</b><div><b style="font-size:14px">3D models:</b> <code>F1 25\2025_asset_groups\environment_package\tracks\&lt;track&gt;\wep\&lt;track&gt;_common.erp</code><br><br><b style="font-size:14px">Full-size textures:</b> the <code>objects\textures</code> folder in <code>F1 25\environment_package\tracks\&lt;track&gt;</code></div></div></div>
     <div id="tools">
       <div class="seg"><button id="v3d" class="on">3D</button><button id="v2d">2D</button></div>
     </div>
@@ -103,7 +108,7 @@ input[type=range]{flex:1}
   <aside id="side"></aside>
 </main>
 
-<script id="mm-core" type="text/plain">
+<script id="mm-core">
 // ---- .mipmaps core: LZ4 block split + BC1/BC3/BC4/BC5/BC7 decode (runs in a Web Worker) ----
 var MM = (function () {
   'use strict';
@@ -345,6 +350,349 @@ var MM = (function () {
 })();
 if (typeof module !== 'undefined') module.exports = MM;
 
+// ---- Minimal Zstandard decoder (RFC 8878), no dictionaries ----
+var ZSTD = (function () {
+  'use strict';
+  function err(m) { throw new Error('zstd: ' + m); }
+  // backward bit reader: pos = number of unread bits counted from bit 0 of buf[start]
+  function BR(buf, start, end) {
+    var last = buf[end - 1]; if (!last) err('bad stream end');
+    var hb = 31 - Math.clz32(last);
+    this.b = buf; this.s = start; this.pos = (end - 1 - start) * 8 + hb;
+  }
+  BR.prototype.peek = function (n) { // n <= 24
+    if (n === 0) return 0;
+    var p = this.pos - n, shift = 0;
+    if (p < 0) { shift = -p; n += p; p = 0; if (n <= 0) return 0; }
+    var i = this.s + (p >> 3), b = this.b, v = b[i] | (b[i + 1] << 8) | (b[i + 2] << 16) | (b[i + 3] << 24);
+    return (((v >>> (p & 7)) & ((1 << n) - 1)) << shift) >>> 0;
+  };
+  BR.prototype.read = function (n) {
+    if (n > 24) { var hi = this.read(n - 24); return hi * 16777216 + this.read(24); }
+    var v = this.peek(n); this.pos -= n; return v;
+  };
+
+  // forward reader for FSE table descriptions
+  function readNCount(buf, p, maxSym, maxLog) {
+    var bit = 0, start = p;
+    function get(n) { var i = p + (bit >> 3), v = buf[i] | (buf[i + 1] << 8) | (buf[i + 2] << 16) | (buf[i + 3] << 24); return (v >>> (bit & 7)) & ((1 << n) - 1); }
+    var al = get(4) + 5; bit += 4;
+    if (al > maxLog) err('table log too big');
+    var remaining = (1 << al) + 1, threshold = 1 << al, nb = al + 1, sym = 0, prev0 = false, norm = new Int16Array(maxSym + 1);
+    while (remaining > 1 && sym <= maxSym) {
+      if (prev0) {
+        var rep;
+        do { rep = get(2); bit += 2; sym += rep; } while (rep === 3);
+        if (sym > maxSym) break;
+        prev0 = false;
+        if (remaining <= 1) break;
+      }
+      var max = 2 * threshold - 1 - remaining, c;
+      var low = get(nb - 1);
+      if (low < max) { c = low; bit += nb - 1; }
+      else { c = get(nb) & (2 * threshold - 1); if (c >= threshold) c -= max; bit += nb; }
+      c--;
+      remaining -= c < 0 ? -c : c;
+      norm[sym++] = c;
+      prev0 = c === 0;
+      while (remaining < threshold) { nb--; threshold >>= 1; }
+    }
+    if (remaining !== 1) err('bad ncount');
+    return { norm: norm, al: al, n: ((bit + 7) >> 3), maxSym: sym - 1 };
+  }
+  function buildTable(norm, maxSym, al) {
+    var size = 1 << al, sym = new Uint8Array(size), nbits = new Uint8Array(size), base = new Uint16Array(size), high = size - 1, next = new Uint16Array(maxSym + 1);
+    for (var s = 0; s <= maxSym; s++) { if (norm[s] === -1) { sym[high--] = s; next[s] = 1; } else next[s] = norm[s]; }
+    var step = (size >> 1) + (size >> 3) + 3, mask = size - 1, pos = 0;
+    for (var s2 = 0; s2 <= maxSym; s2++) for (var i = 0; i < norm[s2]; i++) { sym[pos] = s2; do pos = (pos + step) & mask; while (pos > high); }
+    for (var u = 0; u < size; u++) {
+      var x = next[sym[u]]++, nb = al - (31 - Math.clz32(x));
+      nbits[u] = nb; base[u] = (x << nb) - size;
+    }
+    return { sym: sym, nb: nbits, base: base, al: al };
+  }
+  function rleTable(s) { return { sym: new Uint8Array([s]), nb: new Uint8Array([0]), base: new Uint16Array([0]), al: 0 }; }
+  function predef(arr, al) { var n = new Int16Array(arr.length); for (var i = 0; i < arr.length; i++) n[i] = arr[i]; return buildTable(n, arr.length - 1, al); }
+  var LL_DEF = predef([4, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 2, 1, 1, 1, 1, 1, -1, -1, -1, -1], 6);
+  var ML_DEF = predef([1, 4, 3, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, -1, -1, -1, -1, -1, -1, -1], 6);
+  var OF_DEF = predef([1, 1, 1, 1, 1, 1, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, -1, -1, -1, -1, -1], 5);
+  var LL_BASE = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 20, 22, 24, 28, 32, 40, 48, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536];
+  var LL_BITS = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 3, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+  var ML_BASE = [], ML_BITS = [];
+  for (var k = 0; k < 32; k++) { ML_BASE.push(k + 3); ML_BITS.push(0); }
+  [[35, 1], [37, 1], [39, 1], [41, 1], [43, 2], [47, 2], [51, 3], [59, 3], [67, 4], [83, 4], [99, 5], [131, 7], [259, 8], [515, 9], [1027, 10], [2051, 11], [4099, 12], [8195, 13], [16387, 14], [32771, 15], [65539, 16]].forEach(function (a) { ML_BASE.push(a[0]); ML_BITS.push(a[1]); });
+
+  // Huffman
+  function readHuf(buf, p) {
+    var hb = buf[p++], w, nw;
+    if (hb < 128) {
+      var nc = readNCount(buf, p, 255, 6), t = buildTable(nc.norm, nc.maxSym, nc.al);
+      var br = new BR(buf, p + nc.n, p + hb);
+      w = new Uint8Array(256); nw = 0;
+      var s1 = br.read(t.al), s2 = br.read(t.al);
+      for (;;) {
+        w[nw++] = t.sym[s1]; s1 = t.base[s1] + br.read(t.nb[s1]);
+        if (br.pos < 0) { w[nw++] = t.sym[s2]; break; }
+        w[nw++] = t.sym[s2]; s2 = t.base[s2] + br.read(t.nb[s2]);
+        if (br.pos < 0) { w[nw++] = t.sym[s1]; break; }
+        if (nw > 254) err('too many weights');
+      }
+      p += hb;
+    } else {
+      nw = hb - 127; w = new Uint8Array(256);
+      for (var i = 0; i < nw; i++) { var by = buf[p + (i >> 1)]; w[i] = (i & 1) ? by & 15 : by >> 4; }
+      p += (nw + 1) >> 1;
+    }
+    var sum = 0; for (var j = 0; j < nw; j++) if (w[j]) sum += 1 << (w[j] - 1);
+    var maxBits = 32 - Math.clz32(sum); // highbit(sum)+1
+    var total = 1 << maxBits, rest = total - sum;
+    if (rest & (rest - 1)) err('bad huffman weights');
+    w[nw++] = 32 - Math.clz32(rest);
+    var size = 1 << maxBits, hsym = new Uint8Array(size), hnb = new Uint8Array(size), rank = new Uint32Array(maxBits + 2);
+    for (var a = 0; a < nw; a++) rank[w[a]]++;
+    var startR = new Uint32Array(maxBits + 2), acc = 0;
+    for (var r = 1; r <= maxBits; r++) { startR[r] = acc; acc += rank[r] << (r - 1); }
+    for (var s = 0; s < nw; s++) {
+      var ww = w[s]; if (!ww) continue;
+      var len = 1 << (ww - 1), st = startR[ww];
+      for (var q = st; q < st + len; q++) { hsym[q] = s; hnb[q] = maxBits + 1 - ww; }
+      startR[ww] += len;
+    }
+    return { p: p, t: { sym: hsym, nb: hnb, max: maxBits } };
+  }
+  function hufStream(buf, s, e, t, out, o, n) {
+    var br = new BR(buf, s, e), mx = t.max;
+    for (var i = 0; i < n; i++) { var v = br.peek(mx); out[o + i] = t.sym[v]; br.pos -= t.nb[v]; }
+  }
+
+  function decompress(src, outSize) {
+    var out = new Uint8Array(outSize || src.length * 8), op = 0, p = 0;
+    function grow(need) { if (op + need <= out.length) return; var n = new Uint8Array(Math.max(out.length * 2, op + need)); n.set(out.subarray(0, op)); out = n; }
+    while (p + 4 <= src.length) {
+      var magic = (src[p] | (src[p + 1] << 8) | (src[p + 2] << 16) | (src[p + 3] << 24)) >>> 0; p += 4;
+      if ((magic & 0xFFFFFFF0) === 0x184D2A50) { var sl = src[p] | (src[p + 1] << 8) | (src[p + 2] << 16) | (src[p + 3] << 24); p += 4 + sl; continue; }
+      if (magic !== 0xFD2FB528) err('bad magic');
+      var fhd = src[p++], fcsFlag = fhd >> 6, single = (fhd >> 5) & 1, chk = (fhd >> 2) & 1, did = fhd & 3;
+      if (!single) p++;
+      p += [0, 1, 2, 4][did];
+      var fcsLen = [single ? 1 : 0, 2, 4, 8][fcsFlag];
+      if (fcsLen) {
+        var fcs = 0; for (var b = 0; b < Math.min(fcsLen, 6); b++) fcs += src[p + b] * Math.pow(256, b);
+        if (fcsLen === 2) fcs += 256;
+        grow(fcs); p += fcsLen;
+      }
+      var rep = [1, 4, 8], huf = null, tLL = null, tOF = null, tML = null, frameStart = op;
+      for (;;) {
+        var bh = src[p] | (src[p + 1] << 8) | (src[p + 2] << 16); p += 3;
+        var last = bh & 1, type = (bh >> 1) & 3, bsize = bh >>> 3;
+        if (type === 0) { grow(bsize); out.set(src.subarray(p, p + bsize), op); op += bsize; p += bsize; }
+        else if (type === 1) { grow(bsize); out.fill(src[p], op, op + bsize); op += bsize; p += 1; }
+        else if (type === 2) {
+          var be = p + bsize;
+          // literals
+          var b0 = src[p], lt = b0 & 3, sf = (b0 >> 2) & 3, regen, csize, lits, lp;
+          if (lt < 2) {
+            if (sf === 0 || sf === 2) { regen = b0 >> 3; p += 1; }
+            else if (sf === 1) { regen = (b0 >> 4) + (src[p + 1] << 4); p += 2; }
+            else { regen = (b0 >> 4) + (src[p + 1] << 4) + (src[p + 2] << 12); p += 3; }
+            if (lt === 0) { lits = src; lp = p; p += regen; }
+            else { lits = new Uint8Array(regen).fill(src[p]); lp = 0; p += 1; }
+          } else {
+            var v = (src[p] | (src[p + 1] << 8) | (src[p + 2] << 16) | (src[p + 3] << 24)) >>> 0, streams = sf === 0 ? 1 : 4, hl;
+            if (sf < 2) { regen = (v >>> 4) & 0x3ff; csize = (v >>> 14) & 0x3ff; hl = 3; }
+            else if (sf === 2) { regen = (v >>> 4) & 0x3fff; csize = (v >>> 18) & 0x3fff; hl = 4; }
+            else { regen = (v >>> 4) & 0x3ffff; csize = ((v >>> 22) | (src[p + 4] << 10)) & 0x3ffff; hl = 5; }
+            p += hl;
+            var cend = p + csize;
+            if (lt === 2) { var h = readHuf(src, p); huf = h.t; p = h.p; }
+            else if (!huf) err('treeless literals without table');
+            lits = new Uint8Array(regen); lp = 0;
+            if (streams === 1) hufStream(src, p, cend, huf, lits, 0, regen);
+            else {
+              var s1 = src[p] | (src[p + 1] << 8), s2 = src[p + 2] | (src[p + 3] << 8), s3 = src[p + 4] | (src[p + 5] << 8), q0 = p + 6, seg = ((regen + 3) >> 2);
+              hufStream(src, q0, q0 + s1, huf, lits, 0, seg);
+              hufStream(src, q0 + s1, q0 + s1 + s2, huf, lits, seg, seg);
+              hufStream(src, q0 + s1 + s2, q0 + s1 + s2 + s3, huf, lits, 2 * seg, seg);
+              hufStream(src, q0 + s1 + s2 + s3, cend, huf, lits, 3 * seg, regen - 3 * seg);
+            }
+            p = cend;
+          }
+          // sequences
+          var ns = src[p++];
+          if (ns >= 128) { if (ns < 255) ns = ((ns - 128) << 8) + src[p++]; else { ns = src[p] + (src[p + 1] << 8) + 0x7F00; p += 2; } }
+          var litEnd = lp + regen;
+          if (ns === 0) { grow(regen); out.set(lits.subarray(lp, litEnd), op); op += regen; }
+          else {
+            var modes = src[p++];
+            var mLL = modes >> 6, mOF = (modes >> 4) & 3, mML = (modes >> 2) & 3;
+            function pick(mode, def, maxSym, maxLog, prev) {
+              if (mode === 0) return def;
+              if (mode === 1) return rleTable(src[p++]);
+              if (mode === 2) { var nc = readNCount(src, p, maxSym, maxLog); p += nc.n; return buildTable(nc.norm, nc.maxSym, nc.al); }
+              if (!prev) err('repeat table missing'); return prev;
+            }
+            tLL = pick(mLL, LL_DEF, 35, 9, tLL); tOF = pick(mOF, OF_DEF, 31, 8, tOF); tML = pick(mML, ML_DEF, 52, 9, tML);
+            var br = new BR(src, p, be);
+            var sLL = br.read(tLL.al), sOF = br.read(tOF.al), sML = br.read(tML.al);
+            for (var n = 0; n < ns; n++) {
+              var ofc = tOF.sym[sOF], mlc = tML.sym[sML], llc = tLL.sym[sLL];
+              var off = Math.pow(2, ofc) + br.read(ofc);
+              var ml = ML_BASE[mlc] + br.read(ML_BITS[mlc]);
+              var ll = LL_BASE[llc] + br.read(LL_BITS[llc]);
+              if (n !== ns - 1) {
+                sLL = tLL.base[sLL] + br.read(tLL.nb[sLL]);
+                sML = tML.base[sML] + br.read(tML.nb[sML]);
+                sOF = tOF.base[sOF] + br.read(tOF.nb[sOF]);
+              }
+              if (off > 3) { off -= 3; rep[2] = rep[1]; rep[1] = rep[0]; rep[0] = off; }
+              else {
+                var idx = ll === 0 ? off + 1 : off;
+                if (idx === 1) off = rep[0];
+                else if (idx === 2) { off = rep[1]; rep[1] = rep[0]; rep[0] = off; }
+                else if (idx === 3) { off = rep[2]; rep[2] = rep[1]; rep[1] = rep[0]; rep[0] = off; }
+                else { off = rep[0] - 1; rep[2] = rep[1]; rep[1] = rep[0]; rep[0] = off; }
+              }
+              grow(ll + ml);
+              if (ll) { out.set(lits.subarray(lp, lp + ll), op); op += ll; lp += ll; }
+              var from = op - off;
+              if (from < 0) err('offset too far');
+              if (off >= ml) { out.copyWithin(op, from, from + ml); op += ml; }
+              else for (var c = 0; c < ml; c++) out[op++] = out[from + c];
+            }
+            var restL = litEnd - lp;
+            if (restL > 0) { grow(restL); out.set(lits.subarray(lp, litEnd), op); op += restL; }
+          }
+          p = be;
+        } else err('reserved block');
+        if (last) break;
+      }
+      if (chk) p += 4;
+    }
+    return op === out.length ? out : out.subarray(0, op);
+  }
+  return { decompress: decompress };
+})();
+if (typeof module !== 'undefined') module.exports = ZSTD;
+
+// ---- EGO .erp archives (F1 25): resource table, models, textures ----
+var ERP = (function () {
+  'use strict';
+  var td = new TextDecoder('latin1');
+  function u32(b, o) { return (b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)) >>> 0; }
+  function u64(b, o) { return u32(b, o) + u32(b, o + 4) * 4294967296; }
+  // head = first 48 bytes; returns {infoOff, infoSize, dataOff}
+  function header(head) {
+    if (td.decode(head.subarray(0, 4)) !== 'ERPK') throw new Error('Not an ERP archive');
+    return { infoOff: u64(head, 16), infoSize: u64(head, 24), dataOff: u64(head, 32) };
+  }
+  // info = bytes of the resource table; returns [{name, type, frags:[{name, off, size, packed, comp}]}]
+  function index(info, dataOff) {
+    var p = 0, n = u32(info, 0), res = []; p = 8;
+    for (var i = 0; i < n; i++) {
+      var len = u32(info, p), q = p + 4, nl = info[q] | (info[q + 1] << 8); q += 2;
+      var name = td.decode(info.subarray(q, q + nl - 1)); q += nl;
+      var type = td.decode(info.subarray(q, q + 16)).replace(/\0[\s\S]*$/, ''); q += 16;
+      q += 4; var nf = info[q++], frags = [];
+      for (var f = 0; f < nf; f++) {
+        var fn = td.decode(info.subarray(q, q + 4)).replace(/\0[\s\S]*$/, '');
+        frags.push({ name: fn, off: dataOff + u64(info, q + 4), size: u64(info, q + 12), comp: info[q + 24], packed: u64(info, q + 25) });
+        q += 33;
+      }
+      res.push({ name: name, type: type, frags: frags });
+      p += 4 + len;
+    }
+    return res;
+  }
+  function unpack(f, bytes) { return f.comp === 17 ? ZSTD.decompress(bytes, f.size) : bytes; }
+  function strings(d) {
+    var out = [], s = -1;
+    for (var i = 0; i < d.length; i++) {
+      var c = d[i];
+      if (c >= 32 && c < 127) { if (s < 0) s = i; }
+      else { if (s >= 0 && c === 0 && i - s >= 2) out.push(td.decode(d.subarray(s, i))); s = -1; }
+    }
+    return out;
+  }
+  // GfxMeshRes
+  function mesh(d) {
+    var h = []; for (var i = 0; i < 16; i++) h.push(u32(d, i * 4));
+    var es = d.length - 8 * h[1] - 20 * h[9], els = [];
+    for (var e = 0; e < h[9]; e++) { var o = es + e * 20; els.push({ slot: u32(d, o), off: u32(d, o + 4), sem: u32(d, o + 8), idx: u32(d, o + 12), fmt: u32(d, o + 16) }); }
+    var subs = [];
+    for (var s = 0; s < h[0]; s++) {
+      var r = 0x40 + s * 88, ne = u32(d, r + 12), vbs = [];
+      for (var k = 0; k < ne; k++) vbs.push(u32(d, r + 0x44 + k * 4));
+      subs.push({ ne: ne, start: u32(d, r + 0x18), count: u32(d, r + 0x1c), prim: u32(d, r + 0x14), vbs: vbs });
+    }
+    var st = strings(d), bufNames = st.filter(function (x) { return /^eaid:\/\/.*[?&](vb|ib)=\d+$/.test(x); }), slots = st.filter(function (x) { return !/^eaid:/.test(x); });
+    // element groups: a new declaration starts at slot 0 position
+    var groups = [];
+    els.forEach(function (el) { if (!groups.length || (el.slot === 0 && el.sem === 1)) groups.push([]); groups[groups.length - 1].push(el); });
+    var uniq = [];
+    subs.forEach(function (sm) { var key = sm.vbs.join(','); var u = uniq.indexOf(key); if (u < 0) { uniq.push(key); u = uniq.length - 1; } sm.u = u; });
+    subs.forEach(function (sm) {
+      var g = groups.length === uniq.length ? groups[sm.u] : null;
+      if (!g || g.length !== sm.ne) g = groups.find(function (x) { return x.length === sm.ne; }) || groups[0];
+      sm.els = g;
+    });
+    var vbNames = bufNames.filter(function (x) { return /[?&]vb=/.test(x); }), ibName = bufNames.find(function (x) { return /[?&]ib=/.test(x); });
+    return { subs: subs, vbNames: vbNames, ibName: ibName, slots: slots };
+  }
+  // GfxBufferRes header: [type, stride, count, fmt]
+  function bufInfo(hdr) { return { type: u32(hdr, 0), stride: u32(hdr, 4), count: u32(hdr, 8), fmt: u32(hdr, 12) }; }
+  var h2f = (function () {
+    var t = new Float32Array(65536);
+    for (var i = 0; i < 65536; i++) {
+      var s = i & 0x8000 ? -1 : 1, e = (i >> 10) & 31, m = i & 1023;
+      t[i] = e === 0 ? s * m * Math.pow(2, -24) : e === 31 ? (m ? NaN : s * Infinity) : s * (1 + m / 1024) * Math.pow(2, e - 15);
+    }
+    return t;
+  })();
+  function readEl(dv, o, fmt, out, k, n) { // n components wanted
+    if (fmt === 47 || fmt === 51) { for (var i = 0; i < n; i++) out[k + i] = i < (fmt === 47 ? 3 : 4) ? dv.getFloat32(o + i * 4, true) : 1; }
+    else if (fmt === 35 || fmt === 29) { var nc = fmt === 35 ? 4 : 2; for (var j = 0; j < n; j++) out[k + j] = j < nc ? h2f[dv.getUint16(o + j * 2, true)] : 1; }
+    else if (fmt === 14) { for (var c = 0; c < n; c++) out[k + c] = dv.getUint8(o + c) / 255; }
+    else { for (var z = 0; z < n; z++) out[k + z] = 0; }
+  }
+  // bufs: {name: {hdr, data}} ; returns parts
+  function buildModel(m, bufs) {
+    var ibuf = bufs[m.ibName]; if (!ibuf) throw new Error('index buffer missing');
+    var ii = bufInfo(ibuf.hdr), idv = new DataView(ibuf.data.buffer, ibuf.data.byteOffset, ibuf.data.byteLength);
+    var parts = [], cache = {};
+    m.subs.forEach(function (sm, si) {
+      if (sm.prim !== 2 || !sm.count) return;
+      var key = sm.vbs.join(','), V = cache[key];
+      if (!V) {
+        var n = Infinity;
+        sm.vbs.forEach(function (v) { var b = bufs[m.vbNames[v]]; if (b) n = Math.min(n, bufInfo(b.hdr).count); });
+        if (!isFinite(n)) return;
+        V = { n: n, pos: new Float32Array(n * 3), nrm: new Float32Array(n * 3), tan: new Float32Array(n * 4), uv: new Float32Array(n * 2), hasN: false, hasT: false, hasUV: false };
+        var tmp = new Float32Array(4);
+        sm.els.forEach(function (el) {
+          var b = bufs[m.vbNames[sm.vbs[el.slot]]]; if (!b) return;
+          var bi = bufInfo(b.hdr), dv = new DataView(b.data.buffer, b.data.byteOffset, b.data.byteLength);
+          var target = el.sem === 1 ? 'pos' : el.sem === 2 ? 'nrm' : el.sem === 3 ? 'tan' : (el.sem === 5 && el.idx === 0) ? 'uv' : null;
+          if (!target) return;
+          var nc = target === 'tan' ? 4 : target === 'uv' ? 2 : 3, arr = V[target];
+          for (var i = 0; i < n; i++) { readEl(dv, i * bi.stride + el.off, el.fmt, arr, i * nc, nc); }
+          if (target === 'nrm') V.hasN = true; if (target === 'tan') V.hasT = true; if (target === 'uv') V.hasUV = true;
+        });
+        cache[key] = V;
+      }
+      var idx = new Uint32Array(sm.count), max = 0;
+      for (var q = 0; q < sm.count; q++) { var v = ii.stride === 4 ? idv.getUint32((sm.start + q) * 4, true) : idv.getUint16((sm.start + q) * 2, true); idx[q] = v; if (v > max) max = v; }
+      if (max >= V.n) return;
+      parts.push({ V: V, key: key, idx: idx, slot: m.slots[Math.min(si, m.slots.length - 1)] || '' });
+    });
+    return parts;
+  }
+  // GfxSurfaceRes header
+  var TEXFMT = { 52: 'BC1', 53: 'BC1', 54: 'BC1', 55: 'BC3', 56: 'BC3', 57: 'BC3', 60: 'BC4', 61: 'BC4', 62: 'BC4', 63: 'BC4', 64: 'BC4', 65: 'BC5', 66: 'BC5', 67: 'BC5', 68: 'BC7', 69: 'BC7', 70: 'BC7' };
+  function surface(hdr) { return { code: u32(hdr, 8), fmt: TEXFMT[u32(hdr, 8)] || null, w: u32(hdr, 12), h: u32(hdr, 16), mips: u32(hdr, 24) }; }
+  return { header: header, index: index, unpack: unpack, strings: strings, mesh: mesh, buildModel: buildModel, surface: surface, bufInfo: bufInfo };
+})();
+if (typeof module !== 'undefined') module.exports = ERP;
+
 </script>
 <script>
 'use strict';
@@ -374,8 +722,21 @@ onmessage = function (e) {
       var w = Math.max(1, m.w >> m.level), h = Math.max(1, m.h >> m.level);
       var out = MM.decode(m.fmt, sp2.levels[m.level], w, h);
       postMessage({ type: 'decoded', req: m.req, w: w, h: h, px: out }, [out.buffer]);
+    } else if (m.type === 'surface') {
+      var data = ERP.unpack(m.f, new Uint8Array(m.b));
+      var px2 = MM.decode(m.fmt, data, m.w, m.h);
+      postMessage({ type: 'surface', req: m.req, w: m.w, h: m.h, px: px2 }, [px2.buffer]);
+    } else if (m.type === 'model') {
+      var mm = ERP.mesh(new Uint8Array(m.mesh)), bufs = {};
+      for (var k in m.bufs) { var x = m.bufs[k]; bufs[k] = { hdr: ERP.unpack(x.hf, new Uint8Array(x.h)), data: ERP.unpack(x.df, new Uint8Array(x.d)) }; }
+      var parts = ERP.buildModel(mm, bufs), verts = {}, tr = [], outParts = [];
+      parts.forEach(function (pt) {
+        if (!verts[pt.key]) { var V = pt.V; verts[pt.key] = { n: V.n, pos: V.pos, nrm: V.nrm, tan: V.tan, uv: V.uv, hasN: V.hasN, hasT: V.hasT, hasUV: V.hasUV }; tr.push(V.pos.buffer, V.nrm.buffer, V.tan.buffer, V.uv.buffer); }
+        outParts.push({ key: pt.key, idx: pt.idx, slot: pt.slot }); tr.push(pt.idx.buffer);
+      });
+      postMessage({ type: 'model', req: m.req, parts: outParts, verts: verts }, tr);
     }
-  } catch (err) { postMessage({ type: m.type === 'analyze' ? 'analyzed' : 'decoded', req: m.req, error: String(err && err.message || err) }); }
+  } catch (err) { postMessage({ type: m.type, req: m.req, error: String(err && err.message || err) }); }
 };`;
 var worker = new Worker(URL.createObjectURL(new Blob([workerSrc], { type: 'text/javascript' })));
 var reqN = 0, pending = {};
@@ -387,7 +748,8 @@ var $ = function (id) { return document.getElementById(id); };
 var maps = [];            // {id, file, name, base, suffix, role, status, packing, levels, cands, fmt, w, h, thumb}
 var groups = {};          // base -> [map]
 var order = [];           // bases in drop order
-var cur = null;           // selected base
+var cur = null;           // selected texture group
+var curModel = null;      // selected model (idf path)
 var curMap = null;        // selected map in inspector
 var mode = '3d', channel = 'rgb', level = 0;
 var opts = { shape: 'cube', tile: 1, alphaTest: true, height: true, heightScale: 0.06, flipG: false, spin: true, light: 35 };
@@ -404,7 +766,8 @@ function fmtBytes(n) { return n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : 
 
 // ---------- adding files ----------
 function addFiles(files) {
-  var added = 0;
+  var added = 0, erps = files.filter(function (f) { return /\.erp$/i.test(f.name); });
+  if (erps.length) { $('drop').style.display = 'none'; loadErps(erps); }
   files.forEach(function (f) {
     if (!/\.mipmaps$/i.test(f.name)) return;
     if (maps.some(function (m) { return m.name === f.name && m.file.size === f.size; })) return;
@@ -414,10 +777,10 @@ function addFiles(files) {
     if (!groups[m.base]) { groups[m.base] = []; order.push(m.base); }
     groups[m.base].push(m);
   });
-  if (!added) { toast(files.length ? 'No new .mipmaps files in that drop' : ''); return; }
+  if (!added) { if (!erps.length) toast(files.length ? 'No .mipmaps or .erp files in that drop' : ''); return; }
   $('drop').style.display = 'none';
   renderList();
-  if (!cur) select(order[0]);
+  if (!cur && !curModel) select(order[0]);
   pump();
 }
 var running = 0;
@@ -437,6 +800,8 @@ function pump() {
       next.status = 'ok'; next.packing = r.packing; next.levels = r.levels; next.cands = r.cands;
       next.fmt = r.cands[0].fmt; next.w = r.cands[0].w; next.h = r.cands[0].h;
       next.thumb = toCanvas(r.thumb.px, r.thumb.w, r.thumb.h, 'rgb', 64);
+      applySurfaceInfo(next);
+      modelTexArrived(next);
     }
     running = 0; renderList();
     if (next.base === cur) { renderSide(); refresh(); }
@@ -459,7 +824,9 @@ function decodeMap(m, lv) {
 // ---------- list + inspector ----------
 function renderList() {
   var el = $('list'); el.innerHTML = '';
-  if (!order.length) { el.innerHTML = '<div class="kv" style="padding:12px 14px">No files yet.</div>'; return; }
+  if (!order.length && !models.size) { el.innerHTML = '<div class="kv" style="padding:12px 14px">No files yet.</div>'; return; }
+  if (models.size) renderModelList(el);
+  if (order.length && models.size) el.insertAdjacentHTML('beforeend', '<div class="sec">Textures (' + order.length + ')</div>');
   order.forEach(function (base) {
     var g = groups[base], it = document.createElement('div');
     it.className = 'item' + (base === cur ? ' sel' : '');
@@ -481,7 +848,7 @@ function renderList() {
   });
 }
 function select(base) {
-  cur = base;
+  cur = base; curModel = null;
   var g = groups[base];
   curMap = g.find(function (m) { return m.role === 'color'; }) || g[0];
   level = 0; renderList(); renderSide(); refresh(); pump();
@@ -489,6 +856,7 @@ function select(base) {
 function opt(sel, v, label, on) { var o = document.createElement('option'); o.value = v; o.textContent = label; if (on) o.selected = true; sel.appendChild(o); }
 function renderSide() {
   var el = $('side'); el.innerHTML = '';
+  if (curModel) { renderModelSide(el); return; }
   if (!cur) { el.innerHTML = '<div class="kv">Settings show up here once a file is loaded.</div>'; return; }
   var g = groups[cur];
   el.insertAdjacentHTML('beforeend', '<h2>Maps</h2>');
@@ -810,7 +1178,7 @@ function load3d() {
   if (jobs.length) { busy('Building 3D textures…'); Promise.all(jobs).then(function () { busy(''); draw(); }).catch(function (e) { busy(''); toast(e.message); }); }
   draw();
 }
-var cam = { yaw: 0.6, pitch: 0.35, dist: 3.4 }, lastT = 0, spinning = false;
+var cam = { yaw: 0.6, pitch: 0.35, dist: 3.4, t: [0, 0, 0], min: 1.2, max: 12, r: 1 }, lastT = 0, spinning = false;
 function persp(f, a, n, fa) { var t = 1 / Math.tan(f / 2); return [t / a, 0, 0, 0, 0, t, 0, 0, 0, 0, (fa + n) / (n - fa), -1, 0, 0, 2 * fa * n / (n - fa), 0]; }
 function lookAt(e, c, up) {
   var z = norm([e[0] - c[0], e[1] - c[1], e[2] - c[2]]), x = norm(cross(up, z)), y = cross(z, x);
@@ -823,21 +1191,23 @@ function draw() {
   if (!R || mode !== '3d') return;
   var cv = $('gl'), dpr = Math.min(2, window.devicePixelRatio || 1), W = Math.max(1, Math.round(cv.clientWidth * dpr)), H = Math.max(1, Math.round(cv.clientHeight * dpr));
   if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
-  var hasH = opts.height && heightSrc && R.t[heightSrc.m.role === 'height' ? 'height' : 'color'];
+  var modelView = !!(curModel && R.model && R.model.base === curModel);
+  var hasH = !modelView && opts.height && heightSrc && R.t[heightSrc.m.role === 'height' ? 'height' : 'color'];
   var seg = hasH ? 256 : 1, mk = opts.shape + '|' + seg + '|' + (opts.shape === 'plane' ? R.aspect.toFixed(3) : '');
-  if (R.meshKey !== mk) { uploadMesh(buildMesh(opts.shape, seg, R.aspect)); R.meshKey = mk; }
+  if (!modelView && R.meshKey !== mk) { uploadMesh(buildMesh(opts.shape, seg, R.aspect)); R.meshKey = mk; }
   gl.viewport(0, 0, W, H);
   var dark = getComputedStyle(document.documentElement).getPropertyValue('--view').trim();
   var bg = hexRgb(dark || '#0b0c0e'); gl.clearColor(bg[0], bg[1], bg[2], 1);
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); gl.enable(gl.DEPTH_TEST);
   gl.useProgram(R.prog);
-  var eye = [cam.dist * Math.cos(cam.pitch) * Math.sin(cam.yaw), cam.dist * Math.sin(cam.pitch), cam.dist * Math.cos(cam.pitch) * Math.cos(cam.yaw)];
-  gl.uniformMatrix4fv(R.U.uProj, false, persp(0.7, W / H, 0.05, 50));
-  gl.uniformMatrix4fv(R.U.uView, false, lookAt(eye, [0, 0, 0], [0, 1, 0]));
+  var eye = [cam.t[0] + cam.dist * Math.cos(cam.pitch) * Math.sin(cam.yaw), cam.t[1] + cam.dist * Math.sin(cam.pitch), cam.t[2] + cam.dist * Math.cos(cam.pitch) * Math.cos(cam.yaw)];
+  gl.uniformMatrix4fv(R.U.uProj, false, persp(0.7, W / H, cam.r * 0.02, cam.r * 60));
+  gl.uniformMatrix4fv(R.U.uView, false, lookAt(eye, cam.t, [0, 1, 0]));
   var la = (opts.light + cam.yaw * 57.3) * Math.PI / 180;
   gl.uniform3f(R.U.uLight, Math.sin(la) * 0.8, 0.9, Math.cos(la) * 0.8);
   gl.uniform3f(R.U.uEye, eye[0], eye[1], eye[2]);
   gl.uniform2f(R.U.uTile, opts.tile, opts.tile);
+  if (curModel) { if (modelView) drawModel(); if (opts.spin && !spinning) { spinning = true; lastT = performance.now(); requestAnimationFrame(tick); } return; }
   var units = [['uColor', 'color'], ['uNormal', 'normal'], ['uSpec', 'spec'], ['uHeight', 'height']];
   units.forEach(function (u, i) {
     gl.activeTexture(gl.TEXTURE0 + i);
@@ -865,22 +1235,322 @@ function hexRgb(h) { h = h.replace('#', ''); if (h.length === 3) h = h.split('')
     if (!pts.has(e.pointerId)) return;
     var p = pts.get(e.pointerId), dx = e.clientX - p[0], dy = e.clientY - p[1]; pts.set(e.pointerId, [e.clientX, e.clientY]);
     if (pts.size === 1) { cam.yaw -= dx * 0.008; cam.pitch = Math.max(-1.5, Math.min(1.5, cam.pitch + dy * 0.008)); }
-    else if (pts.size === 2) { var a = Array.from(pts.values()), d = Math.hypot(a[0][0] - a[1][0], a[0][1] - a[1][1]); if (pinch) cam.dist = Math.max(1.2, Math.min(12, cam.dist * pinch / d)); pinch = d; }
+    else if (pts.size === 2) { var a = Array.from(pts.values()), d = Math.hypot(a[0][0] - a[1][0], a[0][1] - a[1][1]); if (pinch) cam.dist = Math.max(cam.min, Math.min(cam.max, cam.dist * pinch / d)); pinch = d; }
     draw();
   });
   function up(e) { pts.delete(e.pointerId); if (pts.size < 2) pinch = 0; }
   cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
-  cv.addEventListener('wheel', function (e) { e.preventDefault(); cam.dist = Math.max(1.2, Math.min(12, cam.dist * Math.exp(e.deltaY * 0.001))); draw(); }, { passive: false });
+  cv.addEventListener('wheel', function (e) { e.preventDefault(); cam.dist = Math.max(cam.min, Math.min(cam.max, cam.dist * Math.exp(e.deltaY * 0.001))); draw(); }, { passive: false });
 })();
+
+// ---------- .erp archives: models ----------
+var resIdx = new Map();      // resource name -> {file, r}
+var models = new Map();      // idf path -> [model resource names]
+var surfByBase = new Map();  // "x_d.tif" -> {file, r}
+var erpFiles = [], modelFilter = '';
+function readSlice(file, off, len) { return file.slice(off, off + len).arrayBuffer().then(function (b) { return new Uint8Array(b); }); }
+function fragRaw(e, i) { var f = e.r.frags[i]; return readSlice(e.file, f.off, f.packed); }
+function fragU(e, i) { return fragRaw(e, i).then(function (b) { return ERP.unpack(e.r.frags[i], b); }); }
+function shortName(n) { return n.replace(/^.*\//, ''); }
+function loadErps(files) {
+  var chain = Promise.resolve();
+  files.forEach(function (f) {
+    if (erpFiles.some(function (x) { return x.name === f.name && x.size === f.size; })) return;
+    chain = chain.then(function () {
+      busy('Reading ' + f.name + '…');
+      return readSlice(f, 0, 48).then(function (h) {
+        var H = ERP.header(h);
+        return readSlice(f, H.infoOff, H.infoSize).then(function (info) {
+          var list = ERP.index(info, H.dataOff), nm = 0;
+          list.forEach(function (r) {
+            var e = { file: f, r: r };
+            resIdx.set(r.name, e);
+            if (r.type === 'GfxModelRes') {
+              // "x.idf-x_chunk_01" are sponsor variants of x.idf; "a.b.idf" are pieces of one multi-object a
+              var base = r.name.replace(/\?model$/, '').replace(/(\.idf)-[^\/]*$/, '$1').replace(/^(.*\/[^\/.]+)\.[^\/]+(\.idf)$/, '$1$2');
+              if (!models.has(base)) models.set(base, []);
+              if (models.get(base).indexOf(r.name) < 0) { models.get(base).push(r.name); nm++; }
+            } else if (r.type === 'GfxSurfaceRes') surfByBase.set(shortName(r.name).replace(/\.image$/, '').toLowerCase(), e);
+          });
+          erpFiles.push({ name: f.name, size: f.size, models: nm, res: list.length });
+          busy('');
+          maps.forEach(function (m) { if (m.status === 'ok') applySurfaceInfo(m); });
+          renderList();
+          if (!curModel && !cur) { var first = sortedModels()[0]; if (first) selectModel(first); }
+          else renderSide();
+        });
+      }).catch(function (e) { busy(''); toast(f.name + ': ' + e.message); });
+    });
+  });
+}
+function modelLabel(base) { return shortName(base).replace(/\.idf$/, ''); }
+function sortedModels() {
+  var q = modelFilter.toLowerCase();
+  return Array.from(models.keys()).filter(function (b) { return !q || modelLabel(b).toLowerCase().indexOf(q) >= 0; })
+    .sort(function (a, b) {
+      // the track's own objects first, then shared ones
+      var ta = /\/tracks\//.test(a) ? 0 : 1, tb = /\/tracks\//.test(b) ? 0 : 1;
+      return ta - tb || modelLabel(a).localeCompare(modelLabel(b));
+    });
+}
+function renderModelList(el) {
+  var list = sortedModels();
+  el.insertAdjacentHTML('beforeend', '<div class="sec">3D models (' + models.size + ')</div>');
+  var inp = document.createElement('input'); inp.className = 'filter'; inp.placeholder = 'Search models, e.g. building'; inp.value = modelFilter;
+  inp.oninput = function () { modelFilter = inp.value; var pos = inp.selectionStart; renderList(); var n = $('list').querySelector('.filter'); n.focus(); n.setSelectionRange(pos, pos); };
+  el.appendChild(inp);
+  var shown = list.slice(0, 400);
+  shown.forEach(function (base) {
+    var it = document.createElement('div'); it.className = 'item' + (base === curModel ? ' sel' : '');
+    var all = models.get(base), nv = all.filter(function (x) { return /\.idf-[^\/]*\?model$/.test(x); }).length, n = all.length - nv;
+    it.innerHTML = '<div class="ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 2 3 7v10l9 5 9-5V7z"/><path d="M3 7l9 5 9-5M12 12v10"/></svg></div><div><div class="nm"></div><div class="chips"></div></div>';
+    it.querySelector('.nm').textContent = modelLabel(base);
+    var ch = it.querySelector('.chips');
+    ch.insertAdjacentHTML('beforeend', '<span class="chip">' + (/\/tracks\/[^\/]+\/objects\//.test(base) ? 'track' : 'shared') + '</span>' + (n > 1 ? '<span class="chip">' + n + ' pieces</span>' : '') + (nv ? '<span class="chip">' + nv + ' variants</span>' : ''));
+    it.onclick = function () { selectModel(base); };
+    el.appendChild(it);
+  });
+  if (list.length > shown.length) el.insertAdjacentHTML('beforeend', '<div class="kv" style="padding:8px 12px">' + (list.length - shown.length) + ' more, type to search</div>');
+  if (!list.length) el.insertAdjacentHTML('beforeend', '<div class="kv" style="padding:8px 12px">No match</div>');
+}
+var modelInfo = null, modelLoadN = 0;
+function selectModel(base) {
+  curModel = base; cur = null; curMap = null;
+  setMode('3d'); renderList();
+  modelInfo = { base: base, status: 'loading' }; renderSide();
+  var my = ++modelLoadN;
+  busy('Loading ' + modelLabel(base) + '…');
+  loadModel(base).then(function (info) {
+    if (my !== modelLoadN) return;
+    modelInfo = info; busy('');
+    uploadModel(info);
+    var r = info.radius || 1; cam.t = info.center; cam.r = r; cam.dist = r * 2.6; cam.min = r * 0.15; cam.max = r * 12; cam.pitch = 0.3;
+    renderSide(); draw();
+    return applyModelTextures(info, my);
+  }).catch(function (e) {
+    if (my !== modelLoadN) return;
+    busy(''); modelInfo = { base: base, status: 'error', error: e.message }; renderSide(); console.error(e);
+  });
+}
+function loadModel(base) {
+  var names = models.get(base), plain = names.filter(function (n) { return !/\.idf-[^\/]*\?model$/.test(n); });
+  if (plain.length) names = plain; else names = names.slice(0, 1);
+  return materialsFor(base).then(function (mats) {
+    return Promise.all(names.map(function (mn) {
+      var me = resIdx.get(mn.replace(/\?model$/, '?lod=0&mesh'));
+      if (!me) return null;
+      return fragU(me, 0).then(function (mb) {
+        var mm = ERP.mesh(mb), need = mm.vbNames.concat(mm.ibName ? [mm.ibName] : []);
+        return Promise.all(need.map(function (n) {
+          var e = resIdx.get(n); if (!e) return null;
+          return Promise.all([fragRaw(e, 0), fragRaw(e, 1)]).then(function (a) {
+            return [n, { hf: { comp: e.r.frags[0].comp, size: e.r.frags[0].size }, h: a[0], df: { comp: e.r.frags[1].comp, size: e.r.frags[1].size }, d: a[1] }];
+          });
+        })).then(function (list) {
+          var bufs = {}, tr = [];
+          list.forEach(function (x) { if (x) { bufs[x[0]] = x[1]; tr.push(x[1].h.buffer, x[1].d.buffer); } });
+          return ask({ type: 'model', mesh: mb, bufs: bufs }, tr).then(function (r) { if (r.error) throw new Error(r.error); r.name = mn; return r; });
+        });
+      });
+    })).then(function (results) {
+      var parts = [], verts = 0, tris = 0, mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
+      results.forEach(function (r, ri) {
+        if (!r) return;
+        Object.keys(r.verts).forEach(function (k) {
+          var V = r.verts[k]; verts += V.n;
+          for (var i = 0; i < V.n; i++) for (var c = 0; c < 3; c++) { var v = V.pos[i * 3 + c]; if (v < mn[c]) mn[c] = v; if (v > mx[c]) mx[c] = v; }
+        });
+        r.parts.forEach(function (p) { tris += p.idx.length / 3; parts.push({ V: r.verts[p.key], vkey: ri + '|' + p.key, idx: p.idx, slot: p.slot, mat: mats[p.slot] || mats[Object.keys(mats)[0]] || null }); });
+      });
+      if (!parts.length) throw new Error('No mesh data found for this model in the loaded .erp files');
+      var center = [(mn[0] + mx[0]) / 2, (mn[1] + mx[1]) / 2, (mn[2] + mx[2]) / 2];
+      var radius = Math.hypot(mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2]) / 2 || 1;
+      return { base: base, status: 'ok', parts: parts, mats: mats, verts: verts, tris: tris, center: center, radius: radius, size: [mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2]] };
+    });
+  });
+}
+function materialsFor(base) {
+  var stem = base.replace(/\.idf$/, '.emb?context='), emb = resIdx.get(stem + 'default');
+  if (!emb) { for (var k of resIdx.keys()) if (k.indexOf(stem) === 0) { emb = resIdx.get(k); break; } }
+  if (!emb) return Promise.resolve({});
+  return fragU(emb, 0).then(function (b) {
+    var s = ERP.strings(b), map = {}, jobs = [];
+    for (var i = 0; i < s.length - 1; i++) {
+      if (!/^eaid:/.test(s[i]) && /\.material$/.test(s[i + 1])) {
+        (function (slot, mat) {
+          var info = { slot: slot, name: shortName(mat).replace(/\.material$/, ''), tex: {}, alpha: false, found: false };
+          map[slot] = info;
+          var me = resIdx.get(mat); if (!me) return;
+          info.found = true;
+          jobs.push(fragU(me, 0).then(function (mb) {
+            var ms = ERP.strings(mb), shader = ms.find(function (x) { return /\.nefx2?$/.test(x); }) || '';
+            info.shader = shortName(shader).replace(/\.nefx2?$/, '');
+            ms.filter(function (x) { return /^eaid:.*\.(tif|tga|png|dds)$/i.test(x); }).forEach(function (t) {
+              var suf = ((t.match(/_([a-z]{1,3})\.(tif|tga|png|dds)$/i) || [])[1] || '').toLowerCase(), role = ROLE[suf];
+              if (role && role !== 'height' && !info.tex[role]) info.tex[role] = t;
+            });
+            info.alpha = /alpha|cutout|clip|foliage|fence/i.test(shader) || /_da\.(tif|tga)$/i.test(info.tex.color || '');
+          }));
+        })(s[i], s[i + 1]);
+        i++;
+      }
+    }
+    return Promise.all(jobs).then(function () { return map; });
+  });
+}
+// textures for models: a dropped .mipmaps file wins (full size), otherwise the small copy inside the .erp
+var texCache = new Map(), texSrc = {};
+function mipmapsFor(texPath) { var b = shortName(texPath).toLowerCase() + '.'; return maps.find(function (m) { return m.status === 'ok' && m.name.toLowerCase().indexOf(b) === 0; }); }
+function loadTex(t) {
+  if (texCache.has(t)) return texCache.get(t);
+  var mm = mipmapsFor(t), se = surfByBase.get(shortName(t).toLowerCase()), p;
+  if (mm) p = decodeMap(mm, level3d(mm)).then(function (r) { texSrc[t] = { src: '.mipmaps', w: r.w, h: r.h }; return r; });
+  else if (se) p = fragU(se, 0).then(function (h) {
+    var s = ERP.surface(h); if (!s.fmt) throw new Error('unknown texture format ' + s.code);
+    return fragRaw(se, 1).then(function (d) {
+      return ask({ type: 'surface', f: { comp: se.r.frags[1].comp, size: se.r.frags[1].size }, b: d, fmt: s.fmt, w: s.w, h: s.h }, [d.buffer]);
+    }).then(function (r) { if (r.error) throw new Error(r.error); texSrc[t] = { src: '.erp', w: r.w, h: r.h }; return r; });
+  });
+  else p = Promise.resolve(null).then(function () { texSrc[t] = { src: 'missing' }; return null; });
+  p = p.catch(function (e) { console.warn(t, e); texSrc[t] = { src: 'error' }; return null; });
+  texCache.set(t, p); return p;
+}
+// .mipmaps files carry no size/format; the matching .erp surface header has both
+function applySurfaceInfo(m) {
+  var key = m.name.replace(/\.\d{4}\.mipmaps$/i, '').replace(/\.mipmaps$/i, '').toLowerCase(), se = surfByBase.get(key);
+  if (!se || m.fromErp) return;
+  fragU(se, 0).then(function (h) {
+    var s = ERP.surface(h); if (!s.fmt) return;
+    var w = s.w << m.levels.length, hh = s.h << m.levels.length, bpb = MM.FMT[s.fmt];
+    if (Math.max(1, w >> 2) * Math.max(1, hh >> 2) * bpb !== m.levels[0]) return; // sizes don't line up, keep the guess
+    m.fromErp = true;
+    if (m.fmt === s.fmt && m.w === w && m.h === hh) return;
+    m.cands = [{ fmt: s.fmt, w: w, h: hh, score: 0 }].concat(m.cands.filter(function (c) { return !(c.fmt === s.fmt && c.w === w && c.h === hh); }));
+    m.fmt = s.fmt; m.w = w; m.h = hh;
+    if (m.base === cur) { renderSide(); refresh(); }
+  }).catch(function () {});
+}
+function modelTexArrived(m) {
+  if (!curModel || !modelInfo || modelInfo.status !== 'ok') return;
+  var hit = false;
+  texCache.forEach(function (v, t) { if (m.name.toLowerCase().indexOf(shortName(t).toLowerCase() + '.') === 0) { texCache.delete(t); hit = true; } });
+  if (hit) applyModelTextures(modelInfo, modelLoadN);
+}
+function applyModelTextures(info, my) {
+  var jobs = [];
+  info.parts.forEach(function (p, i) {
+    if (!p.mat) return;
+    ['color', 'normal', 'spec'].forEach(function (role) {
+      var t = p.mat.tex[role]; if (!t) return;
+      jobs.push(loadTex(t).then(function (r) {
+        if (my !== modelLoadN || !r || !R || !R.model) return;
+        var gp = R.model.parts[i]; if (!gp) return;
+        var key = t + '|' + r.w;
+        if (!R.glTex.has(key)) R.glTex.set(key, R.tex(r.px, r.w, r.h));
+        gp.tex[role] = R.glTex.get(key);
+      }));
+    });
+  });
+  if (jobs.length) busy('Loading textures…');
+  return Promise.all(jobs).then(function () { if (my === modelLoadN) { busy(''); renderSide(); draw(); } });
+}
+function uploadModel(info) {
+  if (!R) return;
+  if (R.model) R.model.bufs.forEach(function (b) { gl.deleteBuffer(b); }), R.model.vaos.forEach(function (v) { gl.deleteVertexArray(v); });
+  if (!R.glTex) R.glTex = new Map();
+  R.glTex.forEach(function (t) { gl.deleteTexture(t); }); R.glTex.clear();
+  var vb = {}, bufs = [], vaos = [], parts = [];
+  function abuf(data) { var b = gl.createBuffer(); bufs.push(b); gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW); return b; }
+  info.parts.forEach(function (p) {
+    var V = p.V;
+    if (!vb[p.vkey]) {
+      var tan = V.tan;
+      if (!V.hasT) { tan = new Float32Array(V.n * 4); for (var i = 0; i < V.n; i++) { tan[i * 4] = 1; tan[i * 4 + 3] = 1; } }
+      vb[p.vkey] = { pos: abuf(V.pos), nrm: abuf(V.nrm), tan: abuf(tan), uv: abuf(V.uv) };
+    }
+    var B = vb[p.vkey], vao = gl.createVertexArray(); vaos.push(vao); gl.bindVertexArray(vao);
+    [['aPos', B.pos, 3], ['aNrm', B.nrm, 3], ['aUv', B.uv, 2], ['aTan', B.tan, 4]].forEach(function (a) {
+      var loc = gl.getAttribLocation(R.prog, a[0]); if (loc < 0) return;
+      gl.bindBuffer(gl.ARRAY_BUFFER, a[1]); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, a[2], gl.FLOAT, false, 0, 0);
+    });
+    var ib = gl.createBuffer(); bufs.push(ib); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ib); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, p.idx, gl.STATIC_DRAW);
+    gl.bindVertexArray(null);
+    parts.push({ vao: vao, count: p.idx.length, tex: {}, alpha: !!(p.mat && p.mat.alpha) });
+  });
+  R.model = { base: info.base, parts: parts, bufs: bufs, vaos: vaos };
+}
+function drawModel() {
+  gl.uniform2f(R.U.uTile, 1, 1); gl.uniform1f(R.U.uHeightScale, 0); gl.uniform1i(R.U.uHeightNormals, false);
+  gl.uniform1i(R.U.uFlipG, opts.flipG);
+  R.model.parts.forEach(function (p) {
+    [['uColor', 'color'], ['uNormal', 'normal'], ['uSpec', 'spec'], ['uHeight', null]].forEach(function (u, i) {
+      gl.activeTexture(gl.TEXTURE0 + i); gl.bindTexture(gl.TEXTURE_2D, (u[1] && p.tex[u[1]]) || R.blank); gl.uniform1i(R.U[u[0]], i);
+    });
+    gl.uniform1i(R.U.uHasColor, !!p.tex.color); gl.uniform1i(R.U.uHasNormal, !!p.tex.normal && !opts.noNormals); gl.uniform1i(R.U.uHasSpec, !!p.tex.spec);
+    gl.uniform1i(R.U.uAlphaTest, opts.alphaTest && p.alpha);
+    gl.bindVertexArray(p.vao); gl.drawElements(gl.TRIANGLES, p.count, gl.UNSIGNED_INT, 0);
+  });
+  gl.bindVertexArray(null);
+}
+function renderModelSide(el) {
+  var info = modelInfo;
+  el.insertAdjacentHTML('beforeend', '<h2>Model</h2>');
+  var t = document.createElement('div'); t.className = 'map sel'; t.style.cursor = 'default';
+  t.innerHTML = '<div class="t"></div><div class="meta"></div>';
+  t.querySelector('.t').textContent = modelLabel(curModel);
+  t.querySelector('.meta').textContent = !info || info.status === 'loading' ? 'Loading…' : info.status === 'error' ? 'Could not load: ' + info.error
+    : Math.round(info.tris).toLocaleString('en') + ' triangles · ' + info.verts.toLocaleString('en') + ' vertices · ' + info.size.map(function (v) { return v.toFixed(1); }).join(' × ') + ' m';
+  el.appendChild(t);
+  if (info && info.status === 'ok') {
+    el.insertAdjacentHTML('beforeend', '<h2>Materials</h2>');
+    var slots = Object.keys(info.mats);
+    if (!slots.length) el.insertAdjacentHTML('beforeend', '<div class="kv">No material binding found in the loaded .erp files.</div>');
+    slots.forEach(function (sl) {
+      var m = info.mats[sl], d = document.createElement('div'); d.className = 'map'; d.style.cursor = 'default';
+      d.innerHTML = '<div class="t"></div>'; d.querySelector('.t').textContent = m.name + (m.found ? '' : ' (not in the loaded files)');
+      ['color', 'normal', 'spec'].forEach(function (role) {
+        var tx = m.tex[role]; if (!tx) return;
+        var src = texSrc[tx], line = document.createElement('div'); line.className = 'tex';
+        line.textContent = ROLE_NAMES[role] + ': ' + shortName(tx).replace(/\.tif$/, '') + ' ';
+        var sp = document.createElement('span');
+        sp.textContent = !src ? '(loading)' : src.src === '.mipmaps' ? '· full size ' + src.w + ' px' : src.src === '.erp' ? '· small copy ' + src.w + ' px' : '· missing';
+        line.appendChild(sp); d.appendChild(line);
+      });
+      el.appendChild(d);
+    });
+    var anyErp = Object.keys(texSrc).some(function (k) { return texSrc[k].src === '.erp'; });
+    if (anyErp) el.insertAdjacentHTML('beforeend', '<div class="kv">The .erp only holds small copies of the textures. Drop the track\'s <b>objects\\textures</b> folder (the .mipmaps files) to swap in the full-size ones.</div>');
+  }
+  el.insertAdjacentHTML('beforeend', '<h2>View</h2>');
+  function check(label, key) {
+    var r = document.createElement('div'); r.className = 'row';
+    var l = document.createElement('label'); l.style.cssText = 'min-width:0;color:var(--text);display:flex;gap:8px;align-items:center;cursor:pointer';
+    var c = document.createElement('input'); c.type = 'checkbox'; c.checked = !!opts[key];
+    c.onchange = function () { opts[key] = c.checked; draw(); };
+    l.appendChild(c); l.appendChild(document.createTextNode(label)); r.appendChild(l); el.appendChild(r);
+  }
+  check('Spin', 'spin');
+  check('Cut out transparent parts (alpha)', 'alphaTest');
+  check('Flip normal map green', 'flipG');
+  check('Ignore normal maps', 'noNormals');
+  var r = document.createElement('div'); r.className = 'row'; r.innerHTML = '<label>Light</label>';
+  var s = document.createElement('input'); s.type = 'range'; s.min = 0; s.max = 360; s.step = 1; s.value = opts.light; s.oninput = function () { opts.light = +s.value; draw(); };
+  r.appendChild(s); el.appendChild(r);
+  var r2 = document.createElement('div'); r2.className = 'row';
+  var b = document.createElement('button'); b.textContent = 'Save screenshot';
+  b.onclick = function () { draw(); $('gl').toBlob(function (bl) { var a = document.createElement('a'); a.href = URL.createObjectURL(bl); a.download = modelLabel(curModel) + '.png'; a.click(); }); };
+  r2.appendChild(b); el.appendChild(r2);
+  el.insertAdjacentHTML('beforeend', '<div class="note">Drag to rotate, scroll or pinch to zoom. Loaded archives: ' + erpFiles.map(function (f) { return f.name; }).join(', ') + '. Objects shared between tracks (barriers, signs, garages) live in <code>environment_package\\core_assets</code> and the track\'s own <code>&lt;track&gt;_common.erp</code>; drop those too if a model or material shows as missing.</div>');
+}
 
 // ---------- view switching ----------
 function setMode(m) {
   mode = m; $('v3d').className = m === '3d' ? 'on' : ''; $('v2d').className = m === '2d' ? 'on' : '';
   $('gl').style.display = m === '3d' ? 'block' : 'none'; $('flat').style.display = m === '2d' ? 'block' : 'none';
 }
-function refresh() { if (!cur) return; if (mode === '3d') load3d(); else show2d(); }
+function refresh() { if (curModel) { setMode('3d'); draw(); return; } if (!cur) return; if (mode === '3d') load3d(); else show2d(); }
 $('v3d').onclick = function () { setMode('3d'); refresh(); };
-$('v2d').onclick = function () { setMode('2d'); refresh(); };
+$('v2d').onclick = function () { if (curModel) { toast('Pick a texture on the left to use the 2D view'); return; } setMode('2d'); refresh(); };
 window.addEventListener('resize', function () { if (mode === '3d') draw(); else layout2d(); });
 if (!R) { setMode('2d'); $('v3d').disabled = true; $('v3d').title = 'WebGL 2 is not available in this browser'; }
 
